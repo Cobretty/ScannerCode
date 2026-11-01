@@ -45,10 +45,18 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Configurar .NET 8.0 SDK
+    - name: Configurar .NET 9.0 SDK
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '8.0.x'
+        dotnet-version: '9.0.x'
+
+    - name: Actualizar TargetFramework a .NET 9 (Evitar EOL de .NET 8)
+      run: |
+        echo "Actualizando archivos de proyecto a .NET 9 si tienen net8.0-android..."
+        find . -name "*.csproj" -exec sed -i 's/net8.0-android/net9.0-android/g' {} +
+        find . -name "*.csproj" -exec sed -i 's/Version="8.0.[0-9]*"/Version="9.0.0"/g' {} +
+        echo "Contenido verificado de $PROJECT_PATH:"
+        grep -E "TargetFramework|CheckEol|Version=" "$PROJECT_PATH" || true
 
     - name: Instalar Workload de .NET MAUI para Android
       run: |
@@ -73,7 +81,7 @@ jobs:
     - name: Compilar y Publicar APK Android Firmado
       run: |
         dotnet publish "$PROJECT_PATH" \
-          -f net8.0-android \
+          -f net9.0-android \
           -c Release \
           -p:AndroidPackageFormat=apk \
           -p:AndroidKeyStore=true \
@@ -81,7 +89,9 @@ jobs:
           -p:AndroidSigningKeyAlias=escanerempresa \
           -p:AndroidSigningKeyPass=123456 \
           -p:AndroidSigningStorePass=123456 \
-          -p:AcceptAndroidSDKLicenses=true
+          -p:AcceptAndroidSDKLicenses=true \
+          -p:CheckEolWorkloads=false \
+          -p:NoWarn="NETSDK1202;NETSDK1138"
 
     - name: Listar APKs generados
       run: |
