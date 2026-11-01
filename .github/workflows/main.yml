@@ -1,0 +1,112 @@
+name: Compilar APK Android .NET MAUI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compilar APK Android
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Descargar Repositorio
+      uses: actions/checkout@v4
+
+    - name: Descomprimir código si fue subido como ZIP desde el móvil
+      run: |
+        echo "Buscando archivos ZIP..."
+        for f in *.zip; do
+          if [ -f "$f" ]; then
+            echo "Descomprimiendo: $f"
+            unzip -o "$f"
+          fi
+        done
+        echo "Contenido del directorio raíz:"
+        ls -la
+
+    - name: Localizar archivo de proyecto .csproj
+      run: |
+        PROJ=$(find . -name "EscanerEmpresa.csproj" | head -n 1)
+        if [ -z "$PROJ" ]; then
+          PROJ=$(find . -name "*.csproj" | head -n 1)
+        fi
+        if [ -z "$PROJ" ]; then
+          echo "ERROR: No se encontró ningún archivo .csproj en el repositorio."
+          exit 1
+        fi
+        echo "Proyecto encontrado en: $PROJ"
+        echo "PROJECT_PATH=$PROJ" >> $GITHUB_ENV
+
+    - name: Configurar Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Configurar .NET 9.0 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Preparar y configurar proyecto .NET 9
+      run: |
+        echo "Actualizando archivos de proyecto a .NET 9..."
+        find . -name "*.csproj" -exec sed -i 's/net8\.0-android/net9\.0-android/g' {} +
+        find . -name "*.csproj" -exec sed -i 's/Version="8\.0\.[0-9]*"/Version="9.0.0"/g' {} +
+        # Asegurar directivas NoWarn y CheckEolWorkloads dentro del .csproj (evita errores MSB1006)
+        find . -name "*.csproj" -exec sed -i 's/<CheckEolWorkloads>.*<\/CheckEolWorkloads>//g' {} +
+        find . -name "*.csproj" -exec sed -i 's/<NoWarn>.*<\/NoWarn>//g' {} +
+        find . -name "*.csproj" -exec sed -i 's/<\/PropertyGroup>/  <CheckEolWorkloads>false<\/CheckEolWorkloads>\n    <NoWarn>\$(NoWarn);NETSDK1202;NETSDK1138<\/NoWarn>\n  <\/PropertyGroup>/' {} +
+        echo "Contenido verificado de $PROJECT_PATH:"
+        cat "$PROJECT_PATH"
+
+    - name: Instalar Workload de .NET MAUI para Android
+      run: |
+        dotnet workload install maui-android --skip-manifest-update
+
+    - name: Restaurar Paquetes NuGet
+      run: |
+        dotnet restore "$PROJECT_PATH"
+
+    - name: Generar Clave de Firma Temporal para APK
+      run: |
+        keytool -genkeypair -v \
+          -keystore release.keystore \
+          -alias escanerempresa \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000 \
+          -storepass 123456 \
+          -keypass 123456 \
+          -dname "CN=EscanerEmpresa, OU=Mobile, O=Empresa, L=Madrid, C=ES"
+
+    - name: Compilar y Publicar APK Android Firmado
+      run: |
+        dotnet publish "$PROJECT_PATH" \
+          -f net9.0-android \
+          -c Release \
+          -p:AndroidPackageFormat=apk \
+          -p:AndroidKeyStore=true \
+          -p:AndroidSigningKeyStore=release.keystore \
+          -p:AndroidSigningKeyAlias=escanerempresa \
+          -p:AndroidSigningKeyPass=123456 \
+          -p:AndroidSigningStorePass=123456 \
+          -p:AcceptAndroidSDKLicenses=true \
+          -p:CheckEolWorkloads=false
+
+    - name: Listar APKs generados
+      run: |
+        echo "Buscando APKs generados:"
+        find . -name "*.apk" -not -path "*/obj/*"
+
+    - name: Subir APK como Artefacto Descargable
+      uses: actions/upload-artifact@v4
+      with:
+        name: EscanerEmpresa-Android-APK
+        path: |
+          **/*-Signed.apk
+          **/*.apk
+          !**/obj/**
+        if-no-files-found: warn
